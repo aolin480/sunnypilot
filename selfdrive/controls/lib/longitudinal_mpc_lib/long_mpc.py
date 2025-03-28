@@ -90,7 +90,7 @@ def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
   speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
   delta_speed = v_lead - v_ego
 
-  if delta_speed > 0:
+  if np.all(delta_speed > 0):
     # Adaptive scaling for v_diff_offset based on speed
     v_diff_offset = np.clip(delta_speed * 1.5, 0, v_diff_offset_max)
     scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
