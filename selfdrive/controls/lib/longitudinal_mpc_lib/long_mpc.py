@@ -85,18 +85,22 @@ def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
 
 def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
-  v_diff_offset = 0
   v_diff_offset_max = 12
   speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
   delta_speed = v_lead - v_ego
 
-  if np.all(delta_speed > 0):
-    # Adaptive scaling for v_diff_offset based on speed
-    v_diff_offset = np.clip(delta_speed * 1.5, 0, v_diff_offset_max)
-    scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
-    v_diff_offset *= scaling_factor ** 3 * (10 - 9 * scaling_factor)
+  # Create an array for v_diff_offset with the same shape as delta_speed
+  v_diff_offset = np.zeros_like(delta_speed)
 
-  # Factor in STOP_DISTANCE to ensure a minimum following buffer
+  # Apply scaling only where delta_speed > 0
+  positive_mask = delta_speed > 0
+  v_diff_offset[positive_mask] = np.clip(delta_speed[positive_mask] * 1.5, 0, v_diff_offset_max)
+
+  # Compute scaling factor element-wise
+  scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
+  v_diff_offset *= (scaling_factor ** 3) * (10 - 9 * scaling_factor)
+
+  # Compute stopping distance
   stopping_distance = STOP_DISTANCE + (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
   
   return stopping_distance
