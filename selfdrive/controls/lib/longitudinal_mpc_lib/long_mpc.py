@@ -85,25 +85,28 @@ def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
 
 def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
-  v_diff_offset_max = 12
-  speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
-  delta_speed = v_lead - v_ego
+    v_diff_offset_max = 12  # Consider making this dynamic based on v_ego
+    speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
+    delta_speed = v_lead - v_ego
 
-  # Create an array for v_diff_offset with the same shape as delta_speed
-  v_diff_offset = np.zeros_like(delta_speed)
+    # Create an array for v_diff_offset with the same shape as delta_speed
+    v_diff_offset = np.zeros_like(delta_speed)
 
-  # Apply scaling only where delta_speed > 0
-  positive_mask = delta_speed > 0
-  v_diff_offset[positive_mask] = np.clip(delta_speed[positive_mask] * 1.5, 0, v_diff_offset_max)
+    # Apply scaling only where delta_speed > 0
+    positive_mask = delta_speed > 0
+    v_diff_offset[positive_mask] = np.clip(delta_speed[positive_mask] * 1.5, 0, v_diff_offset_max)
 
-  # Compute scaling factor element-wise
-  scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
-  v_diff_offset *= (scaling_factor ** 3) * (10 - 9 * scaling_factor)
+    # Use a **quadratic** scaling instead of cubic for smoother reduction
+    scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
+    v_diff_offset *= (scaling_factor ** 2) * (1 + 0.5 * scaling_factor)  # Less aggressive reduction
 
-  # Compute stopping distance
-  stopping_distance = STOP_DISTANCE + (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
-  
-  return stopping_distance
+    # Compute stopping distance with a **minimum threshold**
+    stopping_distance = STOP_DISTANCE + (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
+
+    # Ensure the stopping distance does not go below a certain threshold
+    stopping_distance = max(stopping_distance, STOP_DISTANCE + 2)  # Ensure it's at least STOP_DISTANCE + 2 meters
+
+    return stopping_distance
 
 
 def get_safe_obstacle_distance(v_ego, t_follow):
