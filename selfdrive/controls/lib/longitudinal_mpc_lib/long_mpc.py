@@ -86,23 +86,20 @@ def get_stopped_equivalence_factor(v_lead):
 
 def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
   v_diff_offset = 0
-  v_diff_offset_max = STOP_DISTANCE / 2
-  boost_limit_speed = 20 * CV.KPH_TO_MS  # Limit boost effect to speeds below 20 kph
-
+  v_diff_offset_max = 12
+  speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
   delta_speed = v_lead - v_ego
 
-  if np.all(delta_speed > 0):
-    v_diff_offset = delta_speed * 1.5  # Boost acceleration for takeoff
-    v_diff_offset = np.clip(v_diff_offset, 0, v_diff_offset_max)
+  if delta_speed > 0:
+    # Adaptive scaling for v_diff_offset based on speed
+    v_diff_offset = np.clip(delta_speed * 1.5, 0, v_diff_offset_max)
+    scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
+    v_diff_offset *= scaling_factor ** 3 * (10 - 9 * scaling_factor)
 
-    # Boost is only active when v_ego < 20 kph
-    if v_ego < boost_limit_speed:
-      reduction_factor = (boost_limit_speed - v_ego) / boost_limit_speed
-      v_diff_offset *= reduction_factor  # Scale down boost as speed increases
-    else:
-      v_diff_offset = 0  # Completely remove boost above 20 kph to avoid interference
-
-  return (v_lead**2) / (2 * COMFORT_BRAKE) + v_diff_offset
+  # Factor in STOP_DISTANCE to ensure a minimum following buffer
+  stopping_distance = STOP_DISTANCE + (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
+  
+  return stopping_distance
 
 
 def get_safe_obstacle_distance(v_ego, t_follow):
