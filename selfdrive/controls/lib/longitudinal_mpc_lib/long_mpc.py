@@ -87,16 +87,23 @@ def get_stopped_equivalence_factor(v_lead):
 def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
   v_diff_offset = 0
   v_diff_offset_max = STOP_DISTANCE / 2
-  speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS
+  boost_limit_speed = 20 * CV.KPH_TO_MS  # Limit boost effect to speeds below 20 kph
 
   delta_speed = v_lead - v_ego
+
   if np.all(delta_speed > 0):
-    v_diff_offset = delta_speed * 1.5  #Want it to be even snappier? Increase the value from 1.5
+    v_diff_offset = delta_speed * 1.5  # Boost acceleration for takeoff
     v_diff_offset = np.clip(v_diff_offset, 0, v_diff_offset_max)
-    reduction_factor = np.maximum((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0)
-    v_diff_offset *= reduction_factor
+
+    # Boost is only active when v_ego < 20 kph
+    if v_ego < boost_limit_speed:
+      reduction_factor = (boost_limit_speed - v_ego) / boost_limit_speed
+      v_diff_offset *= reduction_factor  # Scale down boost as speed increases
+    else:
+      v_diff_offset = 0  # Completely remove boost above 20 kph to avoid interference
 
   return (v_lead**2) / (2 * COMFORT_BRAKE) + v_diff_offset
+
 
 def get_safe_obstacle_distance(v_ego, t_follow):
   return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + STOP_DISTANCE
