@@ -85,22 +85,25 @@ def get_stopped_equivalence_factor(v_lead):
   return (v_lead**2) / (2 * COMFORT_BRAKE)
 
 def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
-   v_diff_offset = 0
-   v_diff_offset_max = 12
-   speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
-   delta_speed = v_lead - v_ego
- 
-   if np.any(delta_speed > 0):
-     # Scale v_diff_offset with a hybrid approach: linear with a smooth transition
-     v_diff_offset = np.clip(delta_speed * 1.5, 0, v_diff_offset_max)
-     scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
-     # Apply a stronger decay at higher speeds to avoid pulling too close
-     smooth_scaling = scaling_factor ** 3 * (10 - 9 * scaling_factor)
-     v_diff_offset *= smooth_scaling
- 
-   stopping_distance = (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
-   return stopping_distance
+  v_diff_offset_max = 12
+  speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
+  delta_speed = v_lead - v_ego
 
+  v_diff_offset = np.zeros_like(delta_speed)  # Ensure correct shape
+
+  if np.any(delta_speed > 0):
+    # Smooth scaling with a sigmoid-based approach
+    v_diff_offset = v_diff_offset_max * (1 / (1 + np.exp(-0.2 * (delta_speed - 5))))
+
+    # Adjust scaling factor for smooth decay at higher speeds
+    scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
+
+    # Cubic decay, but softened to avoid sudden drops
+    smooth_scaling = (scaling_factor ** 3) * (1.5 - 0.5 * scaling_factor)
+    v_diff_offset *= smooth_scaling
+
+  stopping_distance = (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
+  return stopping_distance
 
 def get_safe_obstacle_distance(v_ego, t_follow):
   return (v_ego**2) / (2 * COMFORT_BRAKE) + t_follow * v_ego + STOP_DISTANCE
