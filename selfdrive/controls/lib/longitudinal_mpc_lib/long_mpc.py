@@ -89,17 +89,17 @@ def get_stopped_equivalence_factor_krkeegen(v_lead, v_ego):
   speed_to_reach_max_v_diff_offset = 26 * CV.KPH_TO_MS  # in m/s
   delta_speed = v_lead - v_ego
 
-  v_diff_offset = np.zeros_like(delta_speed)  # Ensure correct shape
+  v_diff_offset = np.zeros_like(delta_speed)
 
   if np.any(delta_speed > 0):
-    # Smooth scaling with a sigmoid-based approach
-    v_diff_offset = v_diff_offset_max * (1 / (1 + np.exp(-0.2 * (delta_speed - 5))))
+    # Quadratic scaling instead of a sigmoid for a smoother ramp-up
+    v_diff_offset = v_diff_offset_max * ((delta_speed / (delta_speed + 5)) ** 2)
 
     # Adjust scaling factor for smooth decay at higher speeds
     scaling_factor = np.clip((speed_to_reach_max_v_diff_offset - v_ego) / speed_to_reach_max_v_diff_offset, 0, 1)
 
-    # Cubic decay, but softened to avoid sudden drops
-    smooth_scaling = (scaling_factor ** 3) * (1.5 - 0.5 * scaling_factor)
+    # Smooth cubic decay, but less aggressive than before
+    smooth_scaling = (scaling_factor ** 2.5) * (1.4 - 0.4 * scaling_factor)
     v_diff_offset *= smooth_scaling
 
   stopping_distance = (v_lead ** 2) / (2 * COMFORT_BRAKE) + v_diff_offset
