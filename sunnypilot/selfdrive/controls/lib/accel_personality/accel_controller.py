@@ -30,16 +30,16 @@ AccelPersonality = custom.LongitudinalPlanSP.AccelerationPersonality
 
 # Accel personality by @arne182 modified by cgw and kumar
 
-_DP_CRUISE_MIN_V_ECO =    [-0.01, -0.01, -0.10, -1.2]
-_DP_CRUISE_MIN_V_NORMAL = [-0.015, -0.015, -0.12, -1.21]
-_DP_CRUISE_MIN_V_SPORT =  [-0.02, -0.02, -0.14, -1.22]
-_DP_CRUISE_MIN_BP =       [0.,     2.0,  11,   25.]
+# Custom deceleration values - these will be fully respected
+_DP_CRUISE_MIN_V_ECO =    [-1.0, -1.0, -1.2, -1.4, -1.6, -1.8, -2.0, -2.2]  # Milder braking
+_DP_CRUISE_MIN_V_NORMAL = [-1.6, -1.6, -2.0, -2.2, -2.4, -2.6, -2.8, -3.0]  # Standard braking
+_DP_CRUISE_MIN_V_SPORT =  [-2.0, -2.0, -2.4, -2.8, -3.0, -3.2, -3.4, -3.6]  # Aggressive braking
+_DP_CRUISE_MIN_BP =       [0.,        2.0, 2.01, 15., 15.01, 20., 20.01,  40.]
 
 _DP_CRUISE_MAX_V_ECO =    [2.50, 1.80, 1.58, 1.45, 0.82, .532, .432, .32,  .29,  .085]
 _DP_CRUISE_MAX_V_NORMAL = [2.50, 1.90, 1.72, 1.65, 1.00, .75,  .61,  .50,  .38,  .2]
 _DP_CRUISE_MAX_V_SPORT =  [2.00, 2.00, 1.98, 1.90, 1.30, 1.00, .72,  .60,  .48,  .3]
 _DP_CRUISE_MAX_BP =       [0.,   1.,   6.,   8.,   11.,  16,   20.,  25.,  30.,  55.]
-
 
 class AccelController:
   def __init__(self):
@@ -58,34 +58,28 @@ class AccelController:
   def _dp_calc_cruise_accel_limits(self, v_ego: float) -> tuple[float, float]:
     self._read_params()  # Ensure personality updates
 
-    # if self._personality == AccelPersonality.eco:
-    #     min_v = _DP_CRUISE_MIN_V_ECO
-    #     max_v = _DP_CRUISE_MAX_V_ECO
-    # elif self._personality == AccelPersonality.sport:
-    #     min_v = _DP_CRUISE_MIN_V_SPORT
-    #     max_v = _DP_CRUISE_MAX_V_SPORT
-    # else:
-    #     min_v = _DP_CRUISE_MIN_V_NORMAL
-    #     max_v = _DP_CRUISE_MAX_V_NORMAL
-
     if self._personality == AccelPersonality.eco:
+      min_v = _DP_CRUISE_MIN_V_ECO
       max_v = _DP_CRUISE_MAX_V_ECO
-      #print("eco")
     elif self._personality == AccelPersonality.sport:
+      min_v = _DP_CRUISE_MIN_V_SPORT
       max_v = _DP_CRUISE_MAX_V_SPORT
-      #print("sport")
     else:
+      min_v = _DP_CRUISE_MIN_V_NORMAL
       max_v = _DP_CRUISE_MAX_V_NORMAL
-      #print("normal")
 
-    # a_cruise_min = interp(v_ego, _DP_CRUISE_MIN_BP, min_v)
+    a_cruise_min = interp(v_ego, _DP_CRUISE_MIN_BP, min_v)
     a_cruise_max = interp(v_ego, _DP_CRUISE_MAX_BP, max_v)
 
-    return a_cruise_max
+    return a_cruise_min, a_cruise_max
 
   def get_accel_limits(self, v_ego: float, accel_limits: list[float]) -> tuple[float, float]:
     self._read_params()
-    return accel_limits if self._personality == AccelPersonality.stock else self._dp_calc_cruise_accel_limits(v_ego)
+    if self._personality == AccelPersonality.stock:
+      return accel_limits
+    else:
+      # Simply return the personality-based limits without any comparison to system defaults
+      return self._dp_calc_cruise_accel_limits(v_ego)
 
   def is_enabled(self, accel_personality: int = AccelPersonality.stock) -> bool:
     self._personality = accel_personality
