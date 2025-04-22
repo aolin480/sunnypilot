@@ -65,9 +65,9 @@ def get_jerk_factor(personality=log.LongitudinalPersonality.standard):
   if personality==log.LongitudinalPersonality.relaxed:
     return 1.0
   elif personality==log.LongitudinalPersonality.standard:
-    return 1.0
+    return 0.95
   elif personality==log.LongitudinalPersonality.aggressive:
-    return 0.5
+    return 0.6
   else:
     raise NotImplementedError("Longitudinal personality not supported")
 
@@ -84,20 +84,20 @@ def get_T_FOLLOW(personality=log.LongitudinalPersonality.standard):
 
 def get_dynamic_personality(v_ego, personality=log.LongitudinalPersonality.standard):
   if personality==log.LongitudinalPersonality.relaxed:
-    x_vel =  [0.,   19.7,  19.71,  36.1]
-    y_dist = [1.65, 1.65,  1.80,   1.80]
-    #x_vel =  [0.,  36.1]
-    #y_dist = [1.5, 1.80]
+    #x_vel =  [0.,   19.7,  19.71,  36.1]
+    #y_dist = [1.65, 1.65,  1.70,   1.70]
+    x_vel =  [0.,  40]
+    y_dist = [1.2, 1.75]
   elif personality==log.LongitudinalPersonality.standard:
-    x_vel =  [0.,   19.7, 19.71,  36.1]
-    y_dist = [1.45, 1.45,  1.55,   1.55]
-    #x_vel =  [0.,  36.1]
-    #y_dist = [1.3, 1.50]
+    #x_vel =  [0.,   19.7, 19.71,  36.1]
+    #y_dist = [1.30, 1.30,  1.45,   1.45]
+    x_vel =  [0.,  40]
+    y_dist = [1.1, 1.50]
   elif personality==log.LongitudinalPersonality.aggressive:
-    x_vel =  [0.,   19.7,  19.71,  36.1]
-    y_dist = [1.10, 1.10,  1.25,   1.25]
-    #x_vel =  [0.,  36.1]
-    #y_dist = [1.05, 1.25]
+    #x_vel =  [0.,   19.7,  19.71,  36.1]
+    #y_dist = [1.10, 1.10,  1.25,   1.25]
+    x_vel =  [0.,  40]
+    y_dist = [1.0, 1.30]
   else:
     raise NotImplementedError("Dynamic personality not supported")
 
