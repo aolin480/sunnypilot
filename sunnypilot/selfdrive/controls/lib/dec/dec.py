@@ -23,6 +23,7 @@
 # Version = 2025-1-18
 
 import numpy as np
+from typing import Optional, List, Dict, Any, Union, Literal
 
 from cereal import messaging
 from opendbc.car import structs
@@ -34,20 +35,23 @@ from openpilot.sunnypilot.selfdrive.controls.lib.dec.constants import WMACConsta
 # d-e2e, from modeldata.h
 TRAJECTORY_SIZE = 33
 
+# Speed constants
 HIGHWAY_CRUISE_KPH = 70
+V_ACC_MIN = 9.72
 
+# Timing constants
 STOP_AND_GO_FRAME = 60
-
 SET_MODE_TIMEOUT = 10
 
-V_ACC_MIN = 9.72
+# Controller modes
+ControlMode = Literal['acc', 'blended']
 
 
 class GenericMovingAverageCalculator:
-  def __init__(self, window_size):
+  def __init__(self, window_size: int):
     self.window_size = window_size
-    self.data = []
-    self.total = 0
+    self.data: List[float] = []
+    self.total: float = 0.0
 
   def add_data(self, value: float) -> None:
     if len(self.data) == self.window_size:
@@ -55,30 +59,34 @@ class GenericMovingAverageCalculator:
     self.data.append(value)
     self.total += value
 
-  def get_moving_average(self) -> float | None:
-    return None if len(self.data) == 0 else self.total / len(self.data)
+  def get_moving_average(self) -> Optional[float]:
+    return None if not self.data else self.total / len(self.data)
 
   def reset_data(self) -> None:
     self.data = []
-    self.total = 0
+    self.total = 0.0
 
 
 class WeightedMovingAverageCalculator:
-  def __init__(self, window_size):
+  def __init__(self, window_size: int):
     self.window_size = window_size
-    self.data = []
-    self.weights = np.linspace(1, 3, window_size)  # Linear weights, adjust as needed
+    self.data: List[float] = []
+    # Linear weights increasing from 1 to 3
+    self.weights = np.linspace(1, 3, window_size)
 
   def add_data(self, value: float) -> None:
     if len(self.data) == self.window_size:
       self.data.pop(0)
     self.data.append(value)
 
-  def get_weighted_average(self) -> float | None:
-    if len(self.data) == 0:
+  def get_weighted_average(self) -> Optional[float]:
+    if not self.data:
       return None
-    weighted_sum: float = float(np.dot(self.data, self.weights[-len(self.data):]))
-    weight_total: float = float(np.sum(self.weights[-len(self.data):]))
+
+    # Use only the weights corresponding to available data
+    relevant_weights = self.weights[-len(self.data):]
+    weighted_sum: float = float(np.dot(self.data, relevant_weights))
+    weight_total: float = float(np.sum(relevant_weights))
     return weighted_sum / weight_total
 
   def reset_data(self) -> None:
@@ -86,57 +94,60 @@ class WeightedMovingAverageCalculator:
 
 
 class DynamicExperimentalController:
-  def __init__(self, CP: structs.CarParams, mpc, params=None):
+  def __init__(self, CP: structs.CarParams, mpc: Any, params: Optional[Params] = None):
     self._CP = CP
     self._mpc = mpc
     self._params = params or Params()
     self._enabled: bool = self._params.get_bool("DynamicExperimentalControl")
     self._active: bool = False
-    self._mode: str = 'acc'
+    self._mode: ControlMode = 'acc'
     self._frame: int = 0
+    self._set_mode_timeout: int = 0
 
-    # Use weighted moving average for filtering leads
+    # Initialize detectors
+    self._init_detectors()
+
+    # State variables
+    self._v_ego_kph: float = 0.0
+    self._v_cruise_kph: float = 0.0
+    self._has_lead: bool = False
+    self._has_standstill: bool = False
+    self._has_standstill_prev: bool = False
+    self._sng_transit_frame: int = 0
+    self._sng_state: SNG_State = SNG_State.off
+    self._mpc_fcw_crash_cnt: int = 0
+
+  def _init_detectors(self) -> None:
+    # Lead vehicle detector
     self._lead_gmac = WeightedMovingAverageCalculator(window_size=WMACConstants.LEAD_WINDOW_SIZE)
-    self._has_lead_filtered = False
-    self._has_lead_filtered_prev = False
+    self._has_lead_filtered: bool = False
+    self._has_lead_filtered_prev: bool = False
 
+    # Slow down detector
     self._slow_down_gmac = WeightedMovingAverageCalculator(window_size=WMACConstants.SLOW_DOWN_WINDOW_SIZE)
     self._has_slow_down: bool = False
     self._slow_down_confidence: float = 0.0
 
-    self._has_blinkers = False
+    # Blinker state
+    self._has_blinkers: bool = False
 
+    # Slowness detector
     self._slowness_gmac = WeightedMovingAverageCalculator(window_size=WMACConstants.SLOWNESS_WINDOW_SIZE)
     self._has_slowness: bool = False
 
-    self._has_nav_instruction = False
+    # Navigation instruction detector
+    self._has_nav_instruction: bool = False
 
-    self._dangerous_ttc_gmac = WeightedMovingAverageCalculator(window_size=WMACConstants.DANGEROUS_TTC_WINDOW_SIZE)
-    self._has_dangerous_ttc: bool = False
-
-    self._v_ego_kph = 0.
-    self._v_cruise_kph = 0.
-
-    self._has_lead = False
-
-    self._has_standstill = False
-    self._has_standstill_prev = False
-
-    self._sng_transit_frame = 0
-    self._sng_state = SNG_State.off
-
+    # Forward collision warning detector
     self._mpc_fcw_gmac = WeightedMovingAverageCalculator(window_size=WMACConstants.MPC_FCW_WINDOW_SIZE)
     self._has_mpc_fcw: bool = False
-    self._mpc_fcw_crash_cnt = 0
-
-    self._set_mode_timeout = 0
 
   def _read_params(self) -> None:
     if self._frame % int(1. / DT_MDL) == 0:
       self._enabled = self._params.get_bool("DynamicExperimentalControl")
 
-  def mode(self) -> str:
-    return str(self._mode)
+  def mode(self) -> ControlMode:
+    return self._mode
 
   def enabled(self) -> bool:
     return self._enabled
@@ -145,92 +156,147 @@ class DynamicExperimentalController:
     return self._active
 
   @staticmethod
-  def _anomaly_detection(recent_data: list[float], threshold: float = 2.0, context_check: bool = True) -> bool:
+  def _anomaly_detection(recent_data: List[float], threshold: float = 2.0, context_check: bool = True) -> bool:
     """
     Basic anomaly detection using standard deviation.
+
+    Args:
+        recent_data: List of recent values
+        threshold: Number of standard deviations to consider anomalous
+        context_check: If True, require multiple anomalies
+
+    Returns:
+        True if an anomaly is detected
     """
     if len(recent_data) < 5:
       return False
-    mean: float = float(np.mean(recent_data))
-    std_dev: float = float(np.std(recent_data))
-    anomaly: bool = bool(recent_data[-1] > mean + threshold * std_dev)
 
-    # Context check to ensure repeated anomaly
+    recent_array = np.array(recent_data)
+    mean: float = float(np.mean(recent_array))
+    std_dev: float = float(np.std(recent_array))
+
+    # Avoid division by zero
+    if std_dev < 1e-6:
+      return False
+
+    anomaly_threshold = mean + threshold * std_dev
+
+    # Check if the latest value is anomalous
+    latest_anomaly = recent_data[-1] > anomaly_threshold
+
+    # If context check required, verify multiple anomalies exist
     if context_check:
-      return np.count_nonzero(np.array(recent_data) > mean + threshold * std_dev) > 1
-    return anomaly
+      return np.count_nonzero(recent_array > anomaly_threshold) > 1
+    return latest_anomaly
 
   def _adaptive_slowdown_threshold(self) -> float:
     """
-    Adapts the slow-down threshold based on vehicle speed and recent behavior.
-    """
-    slowdown_scaling_factor: float = (1.0 + 0.03 * np.log(1 + len(self._slow_down_gmac.data)))
-    adaptive_threshold: float = float(
-      interp(self._v_ego_kph, WMACConstants.SLOW_DOWN_BP, WMACConstants.SLOW_DOWN_DIST) * slowdown_scaling_factor
-    )
-    return adaptive_threshold
+    Calculate an adaptive threshold for slow-down detection
+    based on vehicle speed and recent behavior.
 
-  def _smoothed_lead_detection(self, lead_prob: float, smoothing_factor: float = 0.2):
+    Returns:
+        Adaptive threshold value
     """
-    Smoothing the lead detection to avoid erratic behavior.
+    # Scale threshold based on data history length (more data = higher confidence)
+    slowdown_scaling_factor: float = 1.0 + 0.03 * np.log(1 + len(self._slow_down_gmac.data))
+
+    # Interpolate base threshold from speed
+    base_threshold = interp(self._v_ego_kph,
+                            WMACConstants.SLOW_DOWN_BP,
+                            WMACConstants.SLOW_DOWN_DIST)
+
+    # Apply scaling factor
+    return float(base_threshold * slowdown_scaling_factor)
+
+  def _smoothed_lead_detection(self, lead_prob: float, smoothing_factor: float = 0.2) -> bool:
     """
-    lead_filtering: float = (1 - smoothing_factor) * self._has_lead_filtered + smoothing_factor * lead_prob
+    Apply exponential smoothing to lead detection probability.
+
+    Args:
+        lead_prob: Current lead detection probability
+        smoothing_factor: Weight for new value (0-1)
+
+    Returns:
+        True if smoothed probability exceeds threshold
+    """
+    lead_filtering: float = (1 - smoothing_factor) * float(self._has_lead_filtered) + smoothing_factor * lead_prob
     return lead_filtering > WMACConstants.LEAD_PROB
-
-  def _adaptive_lead_prob_threshold(self) -> float:
-    """
-    Adapts lead probability threshold based on driving conditions.
-    """
-    if self._v_ego_kph > HIGHWAY_CRUISE_KPH:
-      return float(WMACConstants.LEAD_PROB + 0.1)  # Increase the threshold on highways
-    return float(WMACConstants.LEAD_PROB)
 
   def _update_calculations(self, sm: messaging.SubMaster) -> None:
     car_state = sm['carState']
     lead_one = sm['radarState'].leadOne
     md = sm['modelV2']
 
+    # Update basic state variables
     self._v_ego_kph = car_state.vEgo * 3.6
     self._v_cruise_kph = car_state.vCruise
     self._has_lead = lead_one.status
     self._has_standstill = car_state.standstill
+    self._has_blinkers = car_state.leftBlinker or car_state.rightBlinker
 
-    # fcw detection
+    # Update FCW detection
+    self._update_fcw_detection()
+
+    # Update lead detection
+    self._update_lead_detection(lead_one)
+
+    # Update slow down detection
+    self._update_slow_down_detection(md)
+
+    # Update stop-and-go detection
+    self._update_sng_detection()
+
+    # Update slowness detection
+    self._update_slowness_detection()
+
+    # Keep previous values for next iteration
+    self._has_standstill_prev = self._has_standstill
+    self._has_lead_filtered_prev = self._has_lead_filtered
+
+  def _update_fcw_detection(self) -> None:
+    """Update forward collision warning detection."""
     self._mpc_fcw_gmac.add_data(self._mpc_fcw_crash_cnt > 0)
     if _mpc_fcw_weighted_average := self._mpc_fcw_gmac.get_weighted_average():
       self._has_mpc_fcw = _mpc_fcw_weighted_average > WMACConstants.MPC_FCW_PROB
     else:
       self._has_mpc_fcw = False
 
-    # nav enable detection
-    # self._has_nav_instruction = md.navEnabledDEPRECATED and maneuver_distance / max(car_state.vEgo, 1) < 13
-
-    # lead detection with smoothing
+  def _update_lead_detection(self, lead_one: Any) -> None:
     self._lead_gmac.add_data(lead_one.status)
-    self._has_lead_filtered = (self._lead_gmac.get_weighted_average() or -1.) > WMACConstants.LEAD_PROB
-    #lead_prob = self._lead_gmac.get_weighted_average() or 0
-    #self._has_lead_filtered = self._smoothed_lead_detection(lead_prob)
+    weighted_avg = self._lead_gmac.get_weighted_average()
+    if weighted_avg is not None:
+      self._has_lead_filtered = weighted_avg > WMACConstants.LEAD_PROB
+    else:
+      self._has_lead_filtered = False
 
-    # adaptive slow down detection
+  def _update_slow_down_detection(self, md: Any) -> None:
+    # Check if we have valid trajectory data
+    has_valid_trajectory = (len(md.orientation.x) == len(md.position.x) == TRAJECTORY_SIZE)
+
+    # Get adaptive threshold based on current conditions
     adaptive_threshold = self._adaptive_slowdown_threshold()
-    slow_down_trigger = len(md.orientation.x) == len(md.position.x) == TRAJECTORY_SIZE and md.position.x[TRAJECTORY_SIZE - 1] < adaptive_threshold
+
+    # Determine if trajectory indicates slowdown needed
+    slow_down_trigger = has_valid_trajectory and md.position.x[TRAJECTORY_SIZE - 1] < adaptive_threshold
+
+    # Add to weighted average calculator
     self._slow_down_gmac.add_data(slow_down_trigger)
-    if _has_slow_down_weighted_average := self._slow_down_gmac.get_weighted_average():
-      self._has_slow_down = _has_slow_down_weighted_average > WMACConstants.SLOW_DOWN_PROB
-      self._slow_down_confidence = _has_slow_down_weighted_average  # Store confidence level
+
+    # Get weighted average and determine if slow down is needed
+    weighted_avg = self._slow_down_gmac.get_weighted_average()
+    if weighted_avg is not None:
+      self._has_slow_down = weighted_avg > WMACConstants.SLOW_DOWN_PROB
+      self._slow_down_confidence = weighted_avg
     else:
       self._has_slow_down = False
-      self._slow_down_confidence = 0.0  # No confidence if no slowdown
+      self._slow_down_confidence = 0.0
 
-    # anomaly detection for slow down events
+    # Apply anomaly detection to reduce false positives
     if self._anomaly_detection(self._slow_down_gmac.data):
       self._slow_down_confidence *= 0.85  # Reduce confidence
       self._has_slow_down = self._slow_down_confidence > WMACConstants.SLOW_DOWN_PROB
 
-    # blinker detection
-    self._has_blinkers = car_state.leftBlinker or car_state.rightBlinker
-
-    # sng detection
+  def _update_sng_detection(self) -> None:
     if self._has_standstill:
       self._sng_state = SNG_State.stopped
       self._sng_transit_frame = 0
@@ -244,127 +310,63 @@ class DynamicExperimentalController:
       elif self._sng_transit_frame > 0:
         self._sng_transit_frame -= 1
 
-    # slowness detection
+  def _update_slowness_detection(self) -> None:
     if not self._has_standstill:
-      self._slowness_gmac.add_data(self._v_ego_kph <= (self._v_cruise_kph * WMACConstants.SLOWNESS_CRUISE_OFFSET))
-      if _slowness_weighted_average := self._slowness_gmac.get_weighted_average():
-        self._has_slowness = _slowness_weighted_average > WMACConstants.SLOWNESS_PROB
+      # Check if current speed is significantly below cruise speed
+      is_slow = self._v_ego_kph <= (self._v_cruise_kph * WMACConstants.SLOWNESS_CRUISE_OFFSET)
+      self._slowness_gmac.add_data(is_slow)
+
+      weighted_avg = self._slowness_gmac.get_weighted_average()
+      if weighted_avg is not None:
+        self._has_slowness = weighted_avg > WMACConstants.SLOWNESS_PROB
       else:
         self._has_slowness = False
 
-    # dangerous TTC detection
-    if not self._has_lead_filtered and self._has_lead_filtered_prev:
-      self._dangerous_ttc_gmac.reset_data()
-      self._has_dangerous_ttc = False
-
-    if self._has_lead and car_state.vEgo >= 0.01:
-      self._dangerous_ttc_gmac.add_data(lead_one.dRel / car_state.vEgo)
-
-    if _dangerous_ttc_weighted_average := self._dangerous_ttc_gmac.get_weighted_average():
-      self._has_dangerous_ttc = _dangerous_ttc_weighted_average <= WMACConstants.DANGEROUS_TTC
+  def _determine_control_mode(self) -> None:
+    if self._CP.radarUnavailable:
+      self._determine_radarless_mode()
     else:
-      self._has_dangerous_ttc = False
+      self._determine_radar_mode()
 
-    # keep prev values
-    self._has_standstill_prev = self._has_standstill
-    self._has_lead_filtered_prev = self._has_lead_filtered
-
-  def _radarless_mode(self) -> None:
-    # when mpc fcw crash prob is high
-    # use blended to slow down quickly
-    if self._has_mpc_fcw:
+  def _determine_radarless_mode(self) -> None:
+    # High priority conditions first
+    if self._has_mpc_fcw or self._has_standstill or self._has_slow_down:
       self._set_mode('blended')
       return
 
-    # Nav enabled and distance to upcoming turning is 300 or below
-    # if self._has_nav_instruction:
-    #  self._set_mode('blended')
-    #  return
-
-    # when blinker is on and speed is driving below V_ACC_MIN: blended
-    # we don't want it to switch mode at higher speed, blended may trigger hard brake
-    # if self._has_blinkers and self._v_ego_kph < V_ACC_MIN:
-    #  self._set_mode('blended')
-    #  return
-
-    # when at highway cruise and SNG: blended
-    # ensuring blended mode is used because acc is bad at catching SNG lead car
-    # especially those who accel very fast and then brake very hard.
-    # if self._sng_state == SNG_State.going and self._v_cruise_kph >= V_ACC_MIN:
-    #  self._set_mode('blended')
-    #  return
-
-    # when standstill: blended
-    # in case of lead car suddenly move away under traffic light, acc mode won't brake at traffic light.
-    if self._has_standstill:
-      self._set_mode('blended')
-      return
-
-    # when detecting slow down scenario: blended
-    # e.g. traffic light, curve, stop sign etc.
-    if self._has_slow_down:
-      self._set_mode('blended')
-      return
-
-    # when detecting lead slow down: blended
-    # use blended for higher braking capability
-    if self._has_dangerous_ttc:
-      self._set_mode('blended')
-      return
-
-    # car driving at speed lower than set speed: acc
-    if self._has_slowness:
-      self._set_mode('acc')
-      return
-
+    # Default back to ACC
     self._set_mode('acc')
 
-  def _radar_mode(self) -> None:
-    # when mpc fcw crash prob is high
-    # use blended to slow down quickly
+  def _determine_radar_mode(self) -> None:
+    # Forward collision warning - highest priority
     if self._has_mpc_fcw:
       self._set_mode('blended')
       return
 
-    # If there is a filtered lead, the vehicle is not in standstill, and the lead vehicle's yRel meets the condition,
+    # Filtered lead detected and not at standstill - use ACC for smoother following
     if self._has_lead_filtered and not self._has_standstill:
       self._set_mode('acc')
       return
 
-    # when blinker is on and speed is driving below V_ACC_MIN: blended
-    # we don't want it to switch mode at higher speed, blended may trigger hard brake
-    # if self._has_blinkers and self._v_ego_kph < V_ACC_MIN:
-    #  self._set_mode('blended')
-    #  return
-
-    # when standstill: blended
-    # in case of lead car suddenly move away under traffic light, acc mode won't brake at traffic light.
+    # At standstill - use blended for better control
     if self._has_standstill:
       self._set_mode('blended')
       return
 
-    # when detecting slow down scenario: blended
-    # e.g. traffic light, curve, stop sign etc.
+    # Slow down scenario detected - use blended for more control
     if self._has_slow_down:
       self._set_mode('blended')
       return
 
-    # car driving at speed lower than set speed: acc
+    # Below cruise speed - use ACC for comfort
     if self._has_slowness:
       self._set_mode('acc')
       return
 
-    # Nav enabled and distance to upcoming turning is 300 or below
-    # if self._has_nav_instruction:
-    #  self._set_mode('blended')
-    #  return
-
+    # Default to ACC as fallback
     self._set_mode('acc')
 
-  def set_mpc_fcw_crash_cnt(self) -> None:
-    self._mpc_fcw_crash_cnt = self._mpc.crash_cnt
-
-  def _set_mode(self, mode: str) -> None:
+  def _set_mode(self, mode: ControlMode) -> None:
     if self._set_mode_timeout == 0:
       self._mode = mode
       if mode == 'blended':
@@ -376,14 +378,10 @@ class DynamicExperimentalController:
   def update(self, sm: messaging.SubMaster) -> None:
     self._read_params()
 
-    self.set_mpc_fcw_crash_cnt()
-
     self._update_calculations(sm)
 
-    if self._CP.radarUnavailable:
-      self._radarless_mode()
-    else:
-      self._radar_mode()
+    # Determine control mode
+    self._determine_control_mode()
 
     self._active = sm['selfdriveState'].experimentalMode and self._enabled
 
