@@ -147,7 +147,7 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     # Override accel using Accel Controller if enabled
     if self.accel_controller.is_personality_enabled:
       max_limit = self.accel_controller._get_max_accel_for_speed(v_ego)
-      if self.mpc.mode == 'acc':
+      if self.mode == 'acc':
         # Use the accel controller limits directly
         accel_clip = [ACCEL_MIN, max_limit]
         # Recalculate limit turn according to the new max limit
