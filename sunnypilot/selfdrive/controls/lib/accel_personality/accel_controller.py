@@ -11,8 +11,8 @@ from openpilot.common.params import Params
 
 from openpilot.sunnypilot.selfdrive.controls.lib.accel_personality.accel_profiles import (
   MAX_ACCEL_ECO, MAX_ACCEL_NORMAL, MAX_ACCEL_SPORT,
-  MIN_ACCEL_ECO, MIN_ACCEL_NORMAL, MIN_ACCEL_SPORT, MIN_ACCEL_STOCK,
-  MAX_ACCEL_BREAKPOINTS, MIN_ACCEL_BREAKPOINTS
+  MAX_ACCEL_BREAKPOINTS, MIN_ACCEL_BREAKPOINTS,
+  get_min_accel_spline
 )
 
 
@@ -53,19 +53,16 @@ class AccelController:
   def _get_min_accel_for_speed(self, v_ego: float) -> float:
     self._update_personality_from_param()
 
-    # Clamp v_ego to valid interpolation range
-    v_ego = clamp(v_ego, MIN_ACCEL_BREAKPOINTS[0], MIN_ACCEL_BREAKPOINTS[-1])
-
     if self.personality == AccelPersonality.eco:
-      accel_profile = MIN_ACCEL_ECO
+      mode = "eco"
     elif self.personality == AccelPersonality.sport:
-      accel_profile = MIN_ACCEL_SPORT
+      mode = "sport"
     elif self.personality == AccelPersonality.normal:
-      accel_profile = MIN_ACCEL_NORMAL
+      mode = "normal"
     else:
-      accel_profile = MIN_ACCEL_STOCK
+      mode = "stock"
 
-    return float(interp(v_ego, MIN_ACCEL_BREAKPOINTS, accel_profile))
+    return get_min_accel_spline(v_ego, mode)
 
   def get_accel_limits(self, v_ego: float, accel_limits: list[float]) -> tuple[float, float]:
     self._update_personality_from_param()
